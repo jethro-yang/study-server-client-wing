@@ -15,17 +15,30 @@
 #define PORT 12345
 #define SERVER_IP "127.0.0.1"
 
-enum MessageType
+namespace ClientMessage
 {
-	MSG_HEARTBEAT = 0,
-	MSG_HEARTBEAT_ACK = 1,
-	MSG_START = 2,
-	MSG_FLOAT_DATA = 3,
-	MSG_JOIN = 4,
-	MSG_DISCONNECT = 5,
-	MSG_INFO = 6,
-	MSG_NEW_OWNER = 7
-};
+	enum class Type
+	{
+		MSG_HEARTBEAT,
+		MSG_START,
+		MSG_FLOAT_DATA,
+	};
+}
+
+namespace ServerMessage
+{
+	enum class Type
+	{
+		MSG_CONNECTED,
+		MSG_HEARTBEAT_ACK,
+		MSG_START_ACK,
+		MSG_FLOAT_DATA_ACK,
+		MSG_JOIN,
+		MSG_DISCONNECT,
+		MSG_INFO,
+		MSG_NEW_OWNER,
+	};
+}
 
 #pragma pack(push, 1)
 struct MessageHeader

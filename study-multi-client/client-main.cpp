@@ -17,14 +17,14 @@ int main()
 
 		if (input == "start")
 		{
-			client.SendMsg(0, MSG_START, nullptr, 0);
+			client.SendMsg(0, (int)ClientMessage::Type::MSG_START, nullptr, 0);
 		}
 		else
 		{
 			try
 			{
 				float value = std::stof(input);
-				client.SendMsg(0, MSG_FLOAT_DATA, &value, sizeof(float));
+				client.SendMsg(0, (int)ClientMessage::Type::MSG_FLOAT_DATA, &value, sizeof(float));
 			}
 			catch (...)
 			{

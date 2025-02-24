@@ -23,17 +23,30 @@ enum GameState
 };
 
 // 메시지 타입 enum
-enum MessageType
+namespace ClientMessage
 {
-	MSG_HEARTBEAT = 0,
-	MSG_HEARTBEAT_ACK = 1,
-	MSG_START = 2,
-	MSG_FLOAT_DATA = 3,
-	MSG_JOIN = 4,
-	MSG_DISCONNECT = 5,
-	MSG_INFO = 6,
-	MSG_NEW_OWNER = 7
-};
+	enum class Type
+	{
+		MSG_HEARTBEAT,
+		MSG_START,
+		MSG_FLOAT_DATA,
+	};
+}
+
+namespace ServerMessage
+{
+	enum class Type
+	{
+		MSG_CONNECTED,
+		MSG_HEARTBEAT_ACK,
+		MSG_START_ACK,
+		MSG_FLOAT_DATA_ACK,
+		MSG_JOIN,
+		MSG_DISCONNECT,
+		MSG_INFO,
+		MSG_NEW_OWNER,
+	};
+}
 
 // 메시지 헤더 구조체 (패킹)
 #pragma pack(push, 1)
@@ -154,7 +167,7 @@ void checkAndAbortGameIfNotEnoughPlayers()
 	if (clients.size() < 2 && gameState == RUNNING)
 	{
 		const char* info = "Game aborted: Not enough players.";
-		broadcastMessage(0, MSG_INFO, info, (int)strlen(info) + 1);
+		broadcastMessage(0, (int)ServerMessage::Type::MSG_INFO, info, (int)strlen(info) + 1);
 		gameState = WAITING;
 	}
 }
@@ -168,20 +181,20 @@ void clientThread(Client* client)
 		std::vector<char> bodyBuffer;
 		if (!receiveMessage(client->sock, header, bodyBuffer))
 		{
-			std::cout << "Client " << client->id << " disconnected." << std::endl;
+			std::cout << "Client " << client->id << " disconnected." << "\n";
 			break;
 		}
 		{
 			std::lock_guard<std::recursive_mutex> lock(clientsMutex);
 			switch (header.msgType)
 			{
-			case MSG_HEARTBEAT:
+			case (int)ClientMessage::Type::MSG_HEARTBEAT:
 			{
 				// 하트비트 수신: 즉시 응답
-				sendMessage(client->sock, client->id, MSG_HEARTBEAT_ACK, nullptr, 0);
+				sendMessage(client->sock, client->id, (int)ServerMessage::Type::MSG_HEARTBEAT_ACK, nullptr, 0);
 				break;
 			}
-			case MSG_START:
+			case (int)ClientMessage::Type::MSG_START:
 			{
 				// 방장만 게임 시작 요청 가능 (최소 2명 이상이어야 함)
 				if (client->id == roomOwnerId)
@@ -191,37 +204,37 @@ void clientThread(Client* client)
 						gameState = RUNNING;
 						winnerId = -1;
 						const char* startMsg = "Game started! Send your float numbers.";
-						broadcastMessage(client->id, MSG_START, startMsg, (int)strlen(startMsg) + 1);
-						std::cout << "Game started by room owner (Client " << client->id << ")." << std::endl;
+						broadcastMessage(client->id, (int)ServerMessage::Type::MSG_START_ACK, startMsg, (int)strlen(startMsg) + 1);
+						std::cout << "Game started by room owner (Client " << client->id << ")." << "\n";
 					}
 					else
 					{
 						const char* reply = "Not enough players to start the game.";
-						sendMessage(client->sock, 0, MSG_INFO, reply, (int)strlen(reply) + 1);
+						sendMessage(client->sock, 0, (int)ServerMessage::Type::MSG_INFO, reply, (int)strlen(reply) + 1);
 					}
 				}
 				break;
 			}
-			case MSG_FLOAT_DATA:
+			case (int)ClientMessage::Type::MSG_FLOAT_DATA:
 			{
 				// 실수 데이터: 바디는 sizeof(float)여야 함
 				if (header.bodyLen == sizeof(float))
 				{
 					float value;
 					memcpy(&value, bodyBuffer.data(), sizeof(float));
-					std::cout << "Client " << client->id << " sent float: " << value << std::endl;
+					std::cout << "Client " << client->id << " sent float: " << value << "\n";
 					// 모든 클라이언트에 전달 (브로드캐스트)
-					broadcastMessage(client->id, MSG_FLOAT_DATA, &value, sizeof(float));
+					broadcastMessage(client->id, (int)ServerMessage::Type::MSG_FLOAT_DATA_ACK, &value, sizeof(float));
 
 					// 승리 조건 검사
 					if (value >= TARGET_NUM && winnerId == -1)
 					{
 						winnerId = client->id;
 						std::string winInfo = "Game round ended. Winner is Client " + std::to_string(winnerId) + ".";
-						broadcastMessage(0, MSG_INFO, winInfo.c_str(), (int)(winInfo.size() + 1));
+						broadcastMessage(0, (int)ServerMessage::Type::MSG_INFO, winInfo.c_str(), (int)(winInfo.size() + 1));
 
 						// 각 클라이언트에게 승/패 메시지 전송
-						for (auto c : clients) 
+						for (auto c : clients)
 						{
 							std::string result;
 							if (c->id == winnerId)
@@ -232,9 +245,9 @@ void clientThread(Client* client)
 							{
 								result = "Stage ended. You lost. (Winner: Client " + std::to_string(winnerId) + ")";
 							}
-							sendMessage(c->sock, 0, MSG_INFO, result.c_str(), (int)(result.size() + 1));
+							sendMessage(c->sock, 0, (int)ServerMessage::Type::MSG_INFO, result.c_str(), (int)(result.size() + 1));
 						}
-						std::cout << "Game round ended. Winner is Client " << winnerId << "." << std::endl;
+						std::cout << "Game round ended. Winner is Client " << winnerId << "." << "\n";
 						gameState = WAITING;
 					}
 				}
@@ -242,7 +255,7 @@ void clientThread(Client* client)
 			}
 			default:
 			{
-				std::cout << "Received unknown message type from Client " << client->id << std::endl;
+				std::cout << "Received unknown message type from Client " << client->id << "\n";
 				break;
 			}
 			}
@@ -258,9 +271,9 @@ void clientThread(Client* client)
 			// 나간 클라가 방장이었다면?
 			bool wasRoomOwner = (client->id == roomOwnerId);
 			clients.erase(it);
-			std::cout << "Removed Client " << client->id << "." << std::endl;
+			std::cout << "Removed Client " << client->id << "." << "\n";
 			const char* discMsg = "has left the room.";
-			broadcastMessage(client->id, MSG_DISCONNECT, discMsg, (int)strlen(discMsg) + 1);
+			broadcastMessage(client->id, (int)ServerMessage::Type::MSG_DISCONNECT, discMsg, (int)strlen(discMsg) + 1);
 
 			if (clients.empty())
 			{
@@ -272,9 +285,9 @@ void clientThread(Client* client)
 				{
 					roomOwnerId = clients.front()->id;
 					std::string newOwnerMsg = "Room owner left. New room owner is Client " + std::to_string(roomOwnerId) + ".";
-					broadcastMessage(0, MSG_INFO, newOwnerMsg.c_str(), (int)(newOwnerMsg.size() + 1));
-					broadcastMessage(0, MSG_NEW_OWNER, &roomOwnerId, sizeof(roomOwnerId));
-					std::cout << "Room owner changed to Client " << roomOwnerId << "." << std::endl;
+					broadcastMessage(0, (int)ServerMessage::Type::MSG_INFO, newOwnerMsg.c_str(), (int)(newOwnerMsg.size() + 1));
+					broadcastMessage(0, (int)ServerMessage::Type::MSG_NEW_OWNER, &roomOwnerId, sizeof(roomOwnerId));
+					std::cout << "Room owner changed to Client " << roomOwnerId << "." << "\n";
 				}
 			}
 			checkAndAbortGameIfNotEnoughPlayers();
@@ -289,7 +302,7 @@ int main()
 	WSADATA wsaData;
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
 	{
-		std::cerr << "WSAStartup failed." << std::endl;
+		std::cerr << "WSAStartup failed." << "\n";
 		return 1;
 	}
 
@@ -297,7 +310,7 @@ int main()
 
 	if (serverSock == INVALID_SOCKET)
 	{
-		std::cerr << "Socket creation failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "Socket creation failed: " << WSAGetLastError() << "\n";
 		WSACleanup();
 		return 1;
 	}
@@ -306,7 +319,7 @@ int main()
 
 	if (setsockopt(serverSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) == SOCKET_ERROR)
 	{
-		std::cerr << "setsockopt failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "setsockopt failed: " << WSAGetLastError() << "\n";
 		closesocket(serverSock);
 		WSACleanup();
 		return 1;
@@ -319,7 +332,7 @@ int main()
 
 	if (bind(serverSock, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
 	{
-		std::cerr << "Bind failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "Bind failed: " << WSAGetLastError() << "\n";
 		closesocket(serverSock);
 		WSACleanup();
 		return 1;
@@ -327,52 +340,62 @@ int main()
 
 	if (listen(serverSock, SOMAXCONN) == SOCKET_ERROR)
 	{
-		std::cerr << "Listen failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "Listen failed: " << WSAGetLastError() << "\n";
 		closesocket(serverSock);
 		WSACleanup();
 		return 1;
 	}
-	std::cout << "Server is running. Waiting for clients..." << std::endl;
+	std::cout << "Server is running. Waiting for clients..." << "\n";
 
 	while (true)
 	{
 		sockaddr_in clientAddr;
 		int clientAddrSize = sizeof(clientAddr);
 		SOCKET clientSock = accept(serverSock, (sockaddr*)&clientAddr, &clientAddrSize);
+
 		if (clientSock == INVALID_SOCKET)
 		{
-			std::cerr << "Accept failed: " << WSAGetLastError() << std::endl;
+			std::cerr << "Accept failed: " << WSAGetLastError() << "\n";
 			continue;
 		}
+
 		Client* newClient = new Client;
 		newClient->sock = clientSock;
 		newClient->id = nextClientId++;
+
 		{
 			std::lock_guard<std::recursive_mutex> lock(clientsMutex);
+
 			if (clients.size() >= MAX_PLAYERS)
 			{
 				const char* fullMsg = "Room is full. Connection rejected.";
-				sendMessage(newClient->sock, 0, MSG_INFO, fullMsg, (int)strlen(fullMsg) + 1);
+				sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_INFO, fullMsg, (int)strlen(fullMsg) + 1);
 				closesocket(newClient->sock);
 				delete newClient;
 				continue;
 			}
 			clients.push_back(newClient);
+
+			sendMessage(newClient->sock, newClient->id, (int)ServerMessage::Type::MSG_CONNECTED, &newClient->id, sizeof(newClient->id));
+
 			if (roomOwnerId == -1)
 			{
 				roomOwnerId = newClient->id;
 				const char* ownerMsg = "You are the room owner.";
-				sendMessage(newClient->sock, newClient->id, MSG_INFO, ownerMsg, (int)strlen(ownerMsg) + 1);
+				sendMessage(newClient->sock, newClient->id, (int)ServerMessage::Type::MSG_INFO, ownerMsg, (int)strlen(ownerMsg) + 1);
 			}
 			else
 			{
 				std::string joinMsg = "Connected to server. Room owner is Client " + std::to_string(roomOwnerId) + ".";
-				sendMessage(newClient->sock, newClient->id, MSG_JOIN, joinMsg.c_str(), (int)(joinMsg.size() + 1));
+				sendMessage(newClient->sock, newClient->id, (int)ServerMessage::Type::MSG_INFO, joinMsg.c_str(), (int)(joinMsg.size() + 1));
 			}
-			std::cout << "Client " << newClient->id << " connected." << std::endl;
+
+			std::cout << "Client " << newClient->id << " connected." << "\n";
 			std::string broadcastJoin = "New client joined.";
-			broadcastMessage(newClient->id, MSG_JOIN, broadcastJoin.c_str(), (int)(broadcastJoin.size() + 1));
+			broadcastMessage(newClient->id, (int)ServerMessage::Type::MSG_INFO, broadcastJoin.c_str(), (int)(broadcastJoin.size() + 1));
+			broadcastMessage(newClient->id, (int)ServerMessage::Type::MSG_JOIN, &newClient->id, sizeof(newClient->id));
 		}
+
 		newClient->thread = std::thread(clientThread, newClient);
 		newClient->thread.detach();
 	}

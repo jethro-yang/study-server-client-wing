@@ -30,32 +30,59 @@ void CClient::ReceiveThread(SOCKET sock)
 		std::vector<char> bodyBuffer;
 		if (!ReceiveMsg(sock, header, bodyBuffer))
 		{
-			std::cout << "Disconnected from server." << std::endl;
+			std::cout << "Disconnected from server." << "\n";
 			break;
 		}
 
-		if (header.msgType == MSG_HEARTBEAT_ACK)
+		if (header.msgType == (int)ServerMessage::Type::MSG_HEARTBEAT_ACK)
 		{
 			continue;
 		}
 
 		std::cout << "Message from " << header.senderId << " type " << header.msgType << ": ";
 
-		if (header.bodyLen > 0)
+		switch (header.msgType)
 		{
-			if (header.msgType == MSG_FLOAT_DATA && header.bodyLen == sizeof(float))
-			{
-				float value;
-				memcpy(&value, bodyBuffer.data(), sizeof(float));
-				std::cout << value;
-			}
-			else
-			{
-				// body를 문자열로 간주 (널 종료 문자 포함)
-				std::cout << bodyBuffer.data();
-			}
+		case (int)ServerMessage::Type::MSG_FLOAT_DATA_ACK:
+		{
+			float value;
+			memcpy(&value, bodyBuffer.data(), sizeof(float));
+			std::cout << value;
 		}
-		std::cout << std::endl;
+		break;
+
+		case (int)ServerMessage::Type::MSG_CONNECTED:
+		{
+			// 내가 연결 되었다는것.
+			int value;
+			memcpy(&value, bodyBuffer.data(), sizeof(int));
+			std::cout << "Connected!! My Client ID: " << value;
+		}
+		break;
+
+		case (int)ServerMessage::Type::MSG_JOIN:
+		{
+			// 방에 새로운사람이 들어옴.
+			int value;
+			memcpy(&value, bodyBuffer.data(), sizeof(int));
+			std::cout << "Joined Other Client ID: " << value;
+		}
+		break;
+
+		case (int)ServerMessage::Type::MSG_INFO:
+		{
+			std::cout << bodyBuffer.data();
+		}
+		break;
+
+		default:
+		{
+			std::cout << bodyBuffer.data();
+		}
+		break;
+		}
+
+		std::cout << "\n";
 	}
 }
 
@@ -65,7 +92,7 @@ void CClient::HeartbeatThread(SOCKET sock)
 	while (true)
 	{
 		std::this_thread::sleep_for(std::chrono::seconds(1));
-		SendMsg(sock, 0, MSG_HEARTBEAT, nullptr, 0);
+		SendMsg(sock, 0, (int)ClientMessage::Type::MSG_HEARTBEAT, nullptr, 0);
 	}
 }
 
@@ -134,14 +161,14 @@ bool CClient::Init()
 {
 	if (WSAStartup(MAKEWORD(2, 2), &mWsaData) != 0)
 	{
-		std::cerr << "WSAStartup failed." << std::endl;
+		std::cerr << "WSAStartup failed." << "\n";
 		return false;
 	}
 
 	mSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (mSock == INVALID_SOCKET)
 	{
-		std::cerr << "Socket creation failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "Socket creation failed: " << WSAGetLastError() << "\n";
 		WSACleanup();
 		return false;
 	}
@@ -151,7 +178,7 @@ bool CClient::Init()
 
 	if (inet_pton(AF_INET, SERVER_IP, &mServerAddr.sin_addr) <= 0)
 	{
-		std::cerr << "Invalid address." << std::endl;
+		std::cerr << "Invalid address." << "\n";
 		closesocket(mSock);
 		WSACleanup();
 		return false;
@@ -159,13 +186,13 @@ bool CClient::Init()
 
 	if (connect(mSock, (sockaddr*)&mServerAddr, sizeof(mServerAddr)) == SOCKET_ERROR)
 	{
-		std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
+		std::cerr << "Connection failed: " << WSAGetLastError() << "\n";
 		closesocket(mSock);
 		WSACleanup();
 		return false;
 	}
 
-	std::cout << "Connected to server." << std::endl;
+	std::cout << "Connected to server." << "\n";
 
 	/*
 	std::thread recvThread(receiveThread, sock);
