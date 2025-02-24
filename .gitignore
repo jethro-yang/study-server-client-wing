@@ -1,0 +1,11 @@
+.vs/
+.github/
+.idea/
+study-multi-client/x64/
+study-multi-client/x86/
+
+study-multi-server/x64/
+study-multi-server/x86/
+
+x86/
+x64/
