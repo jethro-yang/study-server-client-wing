@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Client.h"
 
@@ -7,7 +7,7 @@ int main()
 	CClient client;
 	client.Init();
 
-	// »ç¿ëÀÚ ÀÔ·Â Ã³¸®: "start" ¸í·ÉÀº MSG_START, ±× ¿Ü´Â float µ¥ÀÌÅÍ (MSG_FLOAT_DATA)
+	// ì‚¬ìš©ì ì…ë ¥ ì²˜ë¦¬: "start" ëª…ë ¹ì€ MSG_START, ê·¸ ì™¸ëŠ” float ë°ì´í„° (MSG_FLOAT_DATA)
 	while (true)
 	{
 		std::string input;

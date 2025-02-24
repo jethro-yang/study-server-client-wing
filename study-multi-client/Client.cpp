@@ -1,4 +1,4 @@
-#include "Client.h"
+ï»¿#include "Client.h"
 
 CClient::CClient()
 {
@@ -6,8 +6,8 @@ CClient::CClient()
 
 CClient::~CClient()
 {
-	// °¢°¢ ½º·¹µåÇÔ¼ö°¡ ¸¶Àú Á¾·áµÉ ¶§ ±îÁö
-	// ¸ŞÀÎ ½º·¹µå°¡ ºí·Ï»óÅÂ°¡ µÈ´Ù.
+	// ê°ê° ìŠ¤ë ˆë“œí•¨ìˆ˜ê°€ ë§ˆì € ì¢…ë£Œë  ë•Œ ê¹Œì§€
+	// ë©”ì¸ ìŠ¤ë ˆë“œê°€ ë¸”ë¡ìƒíƒœê°€ ëœë‹¤.
 	if (mRecvThread && mRecvThread->joinable())
 	{
 		mRecvThread->join();
@@ -51,7 +51,7 @@ void CClient::ReceiveThread(SOCKET sock)
 			}
 			else
 			{
-				// body¸¦ ¹®ÀÚ¿­·Î °£ÁÖ (³Î Á¾·á ¹®ÀÚ Æ÷ÇÔ)
+				// bodyë¥¼ ë¬¸ìì—´ë¡œ ê°„ì£¼ (ë„ ì¢…ë£Œ ë¬¸ì í¬í•¨)
 				std::cout << bodyBuffer.data();
 			}
 		}
@@ -61,7 +61,7 @@ void CClient::ReceiveThread(SOCKET sock)
 
 void CClient::HeartbeatThread(SOCKET sock)
 {
-	// 1ÃÊ¸¶´Ù ÇÏÆ®ºñÆ® ¸Ş½ÃÁö Àü¼Û
+	// 1ì´ˆë§ˆë‹¤ í•˜íŠ¸ë¹„íŠ¸ ë©”ì‹œì§€ ì „ì†¡
 	while (true)
 	{
 		std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -166,6 +166,16 @@ bool CClient::Init()
 	}
 
 	std::cout << "Connected to server." << std::endl;
+
+	/*
+	std::thread recvThread(receiveThread, sock);
+	std::thread hbThread(heartbeatThread, sock);
+	ì´ë ‡ê²Œ í• ìˆ˜ ì—†ì–´ì„œ
+
+	std::unique_ptr<std::thread> mRecvThread;
+	std::unique_ptr<std::thread> mHbThread;
+	std::unique_ptr ì²˜ë¦¬.
+	*/
 	mRecvThread = std::make_unique<std::thread>(&CClient::ReceiveThread, this, mSock);
 	mHbThread = std::make_unique<std::thread>(&CClient::HeartbeatThread, this, mSock);
 
