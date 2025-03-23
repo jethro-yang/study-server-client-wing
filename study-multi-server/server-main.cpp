@@ -1,327 +1,288 @@
-﻿// 주요 헤더 생략 없이 포함
-#include <iostream>
+﻿#include <iostream>
 #include <thread>
 #include <vector>
 #include <mutex>
 #include <string>
 #include <algorithm>
-#include <unordered_map>
+#include <unordered_set>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <vector>
-#include <cstring>
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 12345
-#define TARGET_NUM 100.0f
 #define MAX_PLAYERS 5
 
-enum GameState
-{
-    WAITING,
-    RUNNING
-};
+enum GameState { WAITING, RUNNING };
 
-namespace ClientMessage
-{
-    enum class Type
-    {
-        MSG_HEARTBEAT,
-        MSG_START,
-        MSG_FLOAT_DATA,
-        MSG_PICK_CHARACTER,
-        MSG_PICK_ITEM,
-        MSG_READY,
-        MSG_UNREADY,
-        MSG_MOVE_UP,
-        MSG_MOVE_DOWN
-    };
+namespace ClientMessage {
+	enum class Type {
+		MSG_HEARTBEAT,
+		MSG_START,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD
+	};
 }
 
-namespace ServerMessage
-{
-    enum class Type
-    {
-        MSG_CONNECTED,
-        MSG_HEARTBEAT_ACK,
-        MSG_START_ACK,
-        MSG_FLOAT_DATA_ACK,
-        MSG_JOIN,
-        MSG_DISCONNECT,
-        MSG_INFO,
-        MSG_NEW_OWNER,
-        MSG_CLIENT_LIST,
-        MSG_PICK_CHARACTER,
-        MSG_PICK_ITEM,
-        MSG_READY,
-        MSG_UNREADY,
-        MSG_MOVE_UP,
-        MSG_MOVE_DOWN
-    };
+namespace ServerMessage {
+	enum class Type {
+		MSG_CONNECTED,
+		MSG_HEARTBEAT_ACK,
+		MSG_START_ACK,
+		MSG_JOIN,
+		MSG_DISCONNECT,
+		MSG_INFO,
+		MSG_NEW_OWNER,
+		MSG_CLIENT_LIST,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD,
+		MSG_GAME_OVER
+	};
 }
 
 #pragma pack(push, 1)
-struct MessageHeader
-{
-    int senderId;
-    int msgType;
-    int bodyLen;
-};
-
-struct ItemSelectInfo
-{
-    int slotIndex;
-    int itemId;
+struct MessageHeader {
+	int senderId;
+	int msgType;
+	int bodyLen;
 };
 #pragma pack(pop)
 
-bool sendAll(SOCKET sock, const char* data, int length)
-{
-    int totalSent = 0;
-    while (totalSent < length)
-    {
-        int sent = send(sock, data + totalSent, length - totalSent, 0);
-        if (sent == SOCKET_ERROR)
-            return false;
-        totalSent += sent;
-    }
-    return true;
+bool sendAll(SOCKET sock, const char* data, int len) {
+	int sent = 0;
+	while (sent < len) {
+		int r = send(sock, data + sent, len - sent, 0);
+		if (r == SOCKET_ERROR) return false;
+		sent += r;
+	}
+	return true;
 }
 
-bool sendMessage(SOCKET sock, int senderId, int msgType, const void* body, int bodyLen)
-{
-    MessageHeader header{ senderId, msgType, bodyLen };
-    if (!sendAll(sock, reinterpret_cast<char*>(&header), sizeof(header)))
-        return false;
-    if (bodyLen > 0 && body != nullptr)
-        return sendAll(sock, reinterpret_cast<const char*>(body), bodyLen);
-    return true;
+bool sendMessage(SOCKET sock, int senderId, int msgType, const void* body, int bodyLen) {
+	MessageHeader header{ senderId, msgType, bodyLen };
+	if (!sendAll(sock, (char*)&header, sizeof(header))) return false;
+	if (body && bodyLen > 0) return sendAll(sock, (char*)body, bodyLen);
+	return true;
 }
 
-bool recvAll(SOCKET sock, char* buffer, int length)
-{
-    int totalReceived = 0;
-    while (totalReceived < length)
-    {
-        int received = recv(sock, buffer + totalReceived, length - totalReceived, 0);
-        if (received <= 0)
-            return false;
-        totalReceived += received;
-    }
-    return true;
+bool recvAll(SOCKET sock, char* buffer, int len) {
+	int recvd = 0;
+	while (recvd < len) {
+		int r = recv(sock, buffer + recvd, len - recvd, 0);
+		if (r <= 0) return false;
+		recvd += r;
+	}
+	return true;
 }
 
-bool receiveMessage(SOCKET sock, MessageHeader& header, std::vector<char>& bodyBuffer)
-{
-    if (!recvAll(sock, reinterpret_cast<char*>(&header), sizeof(header)))
-        return false;
-
-    bodyBuffer.resize(header.bodyLen);
-    if (header.bodyLen > 0)
-        return recvAll(sock, bodyBuffer.data(), header.bodyLen);
-
-    return true;
+bool receiveMessage(SOCKET sock, MessageHeader& header, std::vector<char>& body) {
+	if (!recvAll(sock, (char*)&header, sizeof(header))) return false;
+	body.resize(header.bodyLen);
+	if (header.bodyLen > 0) return recvAll(sock, body.data(), header.bodyLen);
+	return true;
 }
 
-struct Client
-{
-    SOCKET sock;
-    int id;
-    std::thread thread;
-    bool isReady = false;
+struct Client {
+	SOCKET sock;
+	int id;
+	std::thread thread;
+	bool isReady = false;
+	bool isAlive = true;
 };
 
-std::recursive_mutex clientsMutex;
-std::vector<Client*> clients;
-GameState gameState = WAITING;
-int roomOwnerId = -1;
-int nextClientId = 1;
-int winnerId = -1;
+std::recursive_mutex gMutex;
+std::vector<Client*> gClients;
+std::unordered_set<int> gDeadPlayers;
+GameState gState = WAITING;
+int gNextId = 1;
+int gRoomOwner = -1;
+int gMapId = 0;
 
-void broadcastMessage(int senderId, int msgType, const void* body, int bodyLen)
-{
-    std::lock_guard<std::recursive_mutex> lock(clientsMutex);
-    for (auto client : clients)
-        sendMessage(client->sock, senderId, msgType, body, bodyLen);
+void broadcast(int senderId, int msgType, const void* data, int len) {
+	for (auto& c : gClients)
+		sendMessage(c->sock, senderId, msgType, data, len);
 }
 
-void notifyReadyStatus()
-{
-    int readyCount = 0;
-    for (auto c : clients)
-    {
-        if (c->id != roomOwnerId && c->isReady)
-            readyCount++;
-    }
+void checkGameOver() {
+	int aliveCount = 0;
+	for (auto& c : gClients)
+		if (c->isAlive) aliveCount++;
 
-    int expected = (int)clients.size() - 1;
-    if (expected > 0 && readyCount == expected)
-    {
-        // 모든 비방장 유저가 레디
-        std::string msg = "All players are ready. Host can start the game.";
-        for (auto c : clients)
-        {
-            if (c->id == roomOwnerId)
-            {
-                sendMessage(c->sock, 0, (int)ServerMessage::Type::MSG_INFO, msg.c_str(), (int)(msg.size() + 1));
-                break;
-            }
-        }
-    }
+	if (aliveCount == 0) {
+		gState = WAITING;
+		const char* msg = "All players dead. Game over.";
+		broadcast(0, (int)ServerMessage::Type::MSG_GAME_OVER, msg, strlen(msg) + 1);
+		std::cout << "[Server] Game over.\n";
+	}
 }
 
-void clientThread(Client* client)
-{
-    while (true)
-    {
-        MessageHeader header;
-        std::vector<char> bodyBuffer;
-        if (!receiveMessage(client->sock, header, bodyBuffer))
-        {
-            std::cout << "Client " << client->id << " disconnected.\n";
-            break;
-        }
+void clientThread(Client* client) {
+	while (true) {
+		MessageHeader header;
+		std::vector<char> body;
+		if (!receiveMessage(client->sock, header, body)) break;
 
-        std::lock_guard<std::recursive_mutex> lock(clientsMutex);
+		std::lock_guard<std::recursive_mutex> lock(gMutex);
 
-        switch (header.msgType)
-        {
-        case (int)ClientMessage::Type::MSG_HEARTBEAT:
-            sendMessage(client->sock, client->id, (int)ServerMessage::Type::MSG_HEARTBEAT_ACK, nullptr, 0);
-            break;
+		switch ((ClientMessage::Type)header.msgType) {
+		case ClientMessage::Type::MSG_HEARTBEAT:
+			sendMessage(client->sock, client->id, (int)ServerMessage::Type::MSG_HEARTBEAT_ACK, nullptr, 0);
+			break;
 
-        case (int)ClientMessage::Type::MSG_START:
-            if (client->id == roomOwnerId && clients.size() >= 2)
-            {
-                gameState = RUNNING;
-                winnerId = -1;
-                const char* startMsg = "Game started!";
-                broadcastMessage(client->id, (int)ServerMessage::Type::MSG_START_ACK, startMsg, (int)strlen(startMsg) + 1);
-                std::cout << "Game started by host " << client->id << "\n";
-            }
-            break;
+		case ClientMessage::Type::MSG_START:
+			if (client->id == gRoomOwner) {
+				gState = RUNNING;
+				for (auto& c : gClients) c->isAlive = true;
+				gDeadPlayers.clear();
+				const char* startMsg = "Game Started!";
+				broadcast(client->id, (int)ServerMessage::Type::MSG_START_ACK, startMsg, strlen(startMsg) + 1);
+				std::cout << "[Server] Game started by host " << client->id << "\n";
+			}
+			break;
 
-        case (int)ClientMessage::Type::MSG_PICK_CHARACTER:
-            if (header.bodyLen == sizeof(int))
-            {
-                broadcastMessage(client->id, (int)ServerMessage::Type::MSG_PICK_CHARACTER, bodyBuffer.data(), sizeof(int));
-            }
-            break;
+		case ClientMessage::Type::MSG_READY:
+			client->isReady = true;
+			broadcast(client->id, (int)ServerMessage::Type::MSG_READY, nullptr, 0);
+			break;
 
-        case (int)ClientMessage::Type::MSG_PICK_ITEM:
-            if (header.bodyLen == sizeof(ItemSelectInfo))
-            {
-                broadcastMessage(client->id, (int)ServerMessage::Type::MSG_PICK_ITEM, bodyBuffer.data(), sizeof(ItemSelectInfo));
-            }
-            break;
+		case ClientMessage::Type::MSG_UNREADY:
+			client->isReady = false;
+			broadcast(client->id, (int)ServerMessage::Type::MSG_UNREADY, nullptr, 0);
+			break;
 
-        case (int)ClientMessage::Type::MSG_READY:
-            client->isReady = true;
-            broadcastMessage(client->id, (int)ServerMessage::Type::MSG_READY, nullptr, 0);
-            notifyReadyStatus();
-            break;
+		case ClientMessage::Type::MSG_PLAYER_DEAD:
+			client->isAlive = false;
+			broadcast(client->id, (int)ServerMessage::Type::MSG_PLAYER_DEAD, nullptr, 0);
+			gDeadPlayers.insert(client->id);
+			checkGameOver();
+			break;
 
-        case (int)ClientMessage::Type::MSG_UNREADY:
-            client->isReady = false;
-            broadcastMessage(client->id, (int)ServerMessage::Type::MSG_UNREADY, nullptr, 0);
-            break;
+		case ClientMessage::Type::MSG_PICK_MAP:
+		{
+			if (client->id == gRoomOwner && header.bodyLen == sizeof(int))
+			{
+				memcpy(&gMapId, body.data(), sizeof(int));
+				broadcast(0, (int)ServerMessage::Type::MSG_PICK_MAP, &gMapId, sizeof(int));
+				std::cout << "[Server] Map changed to: " << gMapId << "\n";
+			}
+			break;
+		}
 
-        case (int)ClientMessage::Type::MSG_MOVE_UP:
-            broadcastMessage(client->id, (int)ServerMessage::Type::MSG_MOVE_UP, nullptr, 0);
-            break;
+		case ClientMessage::Type::MSG_MOVE_UP:
+			broadcast(client->id, (int)ServerMessage::Type::MSG_MOVE_UP, nullptr, 0);
+			break;
+		case ClientMessage::Type::MSG_MOVE_DOWN:
+			broadcast(client->id, (int)ServerMessage::Type::MSG_MOVE_DOWN, nullptr, 0);
+			break;
+		case ClientMessage::Type::MSG_PICK_ITEM:
+		{
+			if (header.bodyLen == sizeof(int) * 2)
+			{
+				broadcast(client->id, (int)ServerMessage::Type::MSG_PICK_ITEM, body.data(), header.bodyLen);
 
-        case (int)ClientMessage::Type::MSG_MOVE_DOWN:
-            broadcastMessage(client->id, (int)ServerMessage::Type::MSG_MOVE_DOWN, nullptr, 0);
-            break;
+				int slot, itemId;
+				memcpy(&slot, body.data(), sizeof(int));
+				memcpy(&itemId, body.data() + sizeof(int), sizeof(int));
+				std::cout << "[Server] Client " << client->id << " picked item " << itemId << " in slot " << slot << "\n";
+			}
+			break;
+		}
 
-        default:
-            break;
-        }
-    }
+		case ClientMessage::Type::MSG_PICK_CHARACTER:
+		{
+			if (header.bodyLen == sizeof(int))
+			{
+				broadcast(client->id, (int)ServerMessage::Type::MSG_PICK_CHARACTER, body.data(), sizeof(int));
 
-    // 클라이언트 종료 처리
-    {
-        std::lock_guard<std::recursive_mutex> lock(clientsMutex);
-        auto it = std::find_if(clients.begin(), clients.end(), [client](Client* c) { return c->id == client->id; });
+				int characterId;
+				memcpy(&characterId, body.data(), sizeof(int));
+				std::cout << "[Server] Client " << client->id << " picked character " << characterId << "\n";
+			}
+			break;
+		}
 
-        if (it != clients.end())
-        {
-            bool wasOwner = (client->id == roomOwnerId);
-            clients.erase(it);
-            std::cout << "Removed Client " << client->id << "\n";
+		default:
+			break;
+		}
+	}
 
-            // 누가 나갔는지 브로드캐스트
-            broadcastMessage(client->id, (int)ServerMessage::Type::MSG_DISCONNECT, &client->id, sizeof(client->id));
+	// --- 클라이언트 종료 처리 ---
+	{
+		std::lock_guard<std::recursive_mutex> lock(gMutex);
+		auto it = std::find_if(gClients.begin(), gClients.end(), [client](Client* c) { return c->id == client->id; });
 
-            if (clients.empty())
-            {
-                roomOwnerId = -1;
-            }
-            else if (wasOwner)
-            {
-                roomOwnerId = clients.front()->id;
-                broadcastMessage(0, (int)ServerMessage::Type::MSG_NEW_OWNER, &roomOwnerId, sizeof(roomOwnerId));
-            }
-        }
-    }
+		if (it != gClients.end()) {
+			bool wasOwner = (client->id == gRoomOwner);
+			gClients.erase(it);
+			std::cout << "[Server] Removed Client " << client->id << "\n";
 
-    closesocket(client->sock);
-    delete client;
+			broadcast(client->id, (int)ServerMessage::Type::MSG_DISCONNECT, &client->id, sizeof(int));
+
+			if (gClients.empty()) {
+				gRoomOwner = -1;
+				std::cout << "[Server] No clients left. Room owner reset.\n";
+			}
+			else if (wasOwner) {
+				// 새로운 방장 설정 및 브로드캐스트
+				gRoomOwner = gClients.front()->id;
+				std::cout << "[Server] Room owner changed to Client " << gRoomOwner << "\n";
+				broadcast(0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(gRoomOwner));
+			}
+		}
+	}
+
+	closesocket(client->sock);
+	delete client;
 }
 
-int main()
-{
-    WSADATA wsaData;
-    WSAStartup(MAKEWORD(2, 2), &wsaData);
+int main() {
+	WSADATA wsa;
+	WSAStartup(MAKEWORD(2, 2), &wsa);
 
-    SOCKET serverSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    int opt = 1;
-    setsockopt(serverSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+	SOCKET server = socket(AF_INET, SOCK_STREAM, 0);
+	sockaddr_in addr{};
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = INADDR_ANY;
+	addr.sin_port = htons(PORT);
+	bind(server, (sockaddr*)&addr, sizeof(addr));
+	listen(server, SOMAXCONN);
 
-    sockaddr_in serverAddr{};
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(PORT);
+	std::cout << "[Server] Listening on port " << PORT << "...\n";
 
-    bind(serverSock, (sockaddr*)&serverAddr, sizeof(serverAddr));
-    listen(serverSock, SOMAXCONN);
-    std::cout << "Server running on port " << PORT << "\n";
+	while (true) {
+		sockaddr_in clientAddr{};
+		int size = sizeof(clientAddr);
+		SOCKET clientSock = accept(server, (sockaddr*)&clientAddr, &size);
 
-    while (true)
-    {
-        sockaddr_in clientAddr{};
-        int addrSize = sizeof(clientAddr);
-        SOCKET clientSock = accept(serverSock, (sockaddr*)&clientAddr, &addrSize);
+		Client* c = new Client;
+		c->sock = clientSock;
+		c->id = gNextId++;
 
-        Client* newClient = new Client;
-        newClient->sock = clientSock;
-        newClient->id = nextClientId++;
+		{
+			std::lock_guard<std::recursive_mutex> lock(gMutex);
+			gClients.push_back(c);
+			if (gRoomOwner == -1) gRoomOwner = c->id;
 
-        {
-            std::lock_guard<std::recursive_mutex> lock(clientsMutex);
-            clients.push_back(newClient);
+			sendMessage(clientSock, c->id, (int)ServerMessage::Type::MSG_CONNECTED, &c->id, sizeof(int));
+			sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(int));
+		}
 
-            sendMessage(newClient->sock, newClient->id, (int)ServerMessage::Type::MSG_CONNECTED, &newClient->id, sizeof(newClient->id));
-            sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &roomOwnerId, sizeof(roomOwnerId));
+		c->thread = std::thread(clientThread, c);
+		c->thread.detach();
+	}
 
-            std::vector<int> idList;
-            idList.push_back((int)clients.size());
-            for (auto c : clients)
-                idList.push_back(c->id);
-            sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_CLIENT_LIST, idList.data(), (int)(idList.size() * sizeof(int)));
-
-            if (roomOwnerId == -1)
-            {
-                roomOwnerId = newClient->id;
-                sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &roomOwnerId, sizeof(roomOwnerId));
-            }
-        }
-
-        newClient->thread = std::thread(clientThread, newClient);
-        newClient->thread.detach();
-    }
-
-    closesocket(serverSock);
-    WSACleanup();
-    return 0;
+	closesocket(server);
+	WSACleanup();
+	return 0;
 }

@@ -8,37 +8,31 @@
 #include <memory>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <cstdlib>
-#include <cstring>
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 12345
 #define SERVER_IP "127.0.0.1"
 
-namespace ClientMessage
-{
-	enum class Type
-	{
+namespace ClientMessage {
+	enum class Type {
 		MSG_HEARTBEAT,
 		MSG_START,
-		MSG_FLOAT_DATA,
 		MSG_PICK_CHARACTER,
 		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
 		MSG_READY,
 		MSG_UNREADY,
 		MSG_MOVE_UP,
-		MSG_MOVE_DOWN
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD
 	};
 }
 
-namespace ServerMessage
-{
-	enum class Type
-	{
+namespace ServerMessage {
+	enum class Type {
 		MSG_CONNECTED,
 		MSG_HEARTBEAT_ACK,
 		MSG_START_ACK,
-		MSG_FLOAT_DATA_ACK,
 		MSG_JOIN,
 		MSG_DISCONNECT,
 		MSG_INFO,
@@ -46,10 +40,13 @@ namespace ServerMessage
 		MSG_CLIENT_LIST,
 		MSG_PICK_CHARACTER,
 		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
 		MSG_READY,
 		MSG_UNREADY,
 		MSG_MOVE_UP,
-		MSG_MOVE_DOWN
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD,
+		MSG_GAME_OVER
 	};
 }
 
@@ -59,12 +56,6 @@ struct MessageHeader
 	int senderId;
 	int msgType;
 	int bodyLen;
-};
-
-struct ItemSelectInfo
-{
-	int slotIndex;
-	int itemId;
 };
 #pragma pack(pop)
 
@@ -100,41 +91,30 @@ public:
 
 	bool Init()
 	{
-		if (WSAStartup(MAKEWORD(2, 2), &mWsaData) != 0)
-		{
-			std::cerr << "WSAStartup failed.\n";
-			return false;
-		}
+		if (WSAStartup(MAKEWORD(2, 2), &mWsaData) != 0) return false;
 
 		mSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-		if (mSock == INVALID_SOCKET)
-		{
-			std::cerr << "Socket creation failed.\n";
-			return false;
-		}
+		if (mSock == INVALID_SOCKET) return false;
 
 		mServerAddr.sin_family = AF_INET;
 		mServerAddr.sin_port = htons(PORT);
 		inet_pton(AF_INET, SERVER_IP, &mServerAddr.sin_addr);
 
-		if (connect(mSock, (sockaddr*)&mServerAddr, sizeof(mServerAddr)) == SOCKET_ERROR)
-		{
-			std::cerr << "Connect failed.\n";
-			return false;
-		}
+		if (connect(mSock, (sockaddr*)&mServerAddr, sizeof(mServerAddr)) == SOCKET_ERROR) return false;
 
 		std::cout << "Connected to server.\n";
+
 		mRecvThread = std::make_unique<std::thread>(&CClient::ReceiveThread, this, mSock);
 		mHbThread = std::make_unique<std::thread>(&CClient::HeartbeatThread, this, mSock);
+
 		return true;
 	}
 
 	void SendMsg(int senderId, int msgType, const void* body, int bodyLen)
 	{
 		MessageHeader header{ senderId, msgType, bodyLen };
-		SendAll(mSock, reinterpret_cast<const char*>(&header), sizeof(header));
-		if (bodyLen > 0 && body)
-			SendAll(mSock, reinterpret_cast<const char*>(body), bodyLen);
+		SendAll(mSock, (char*)&header, sizeof(header));
+		if (body && bodyLen > 0) SendAll(mSock, (char*)body, bodyLen);
 	}
 
 	bool PollMessage(RecvMessage& out)
@@ -172,44 +152,40 @@ private:
 		}
 	}
 
-	bool SendAll(SOCKET sock, const char* data, int length)
+	bool SendAll(SOCKET sock, const char* data, int len)
 	{
-		int totalSent = 0;
-		while (totalSent < length)
+		int sent = 0;
+		while (sent < len)
 		{
-			int sent = send(sock, data + totalSent, length - totalSent, 0);
-			if (sent == SOCKET_ERROR) return false;
-			totalSent += sent;
+			int r = send(sock, data + sent, len - sent, 0);
+			if (r == SOCKET_ERROR) return false;
+			sent += r;
 		}
 		return true;
 	}
 
 	bool ReceiveMsg(SOCKET sock, MessageHeader& header, std::vector<char>& bodyBuffer)
 	{
-		if (!RecvAll(sock, reinterpret_cast<char*>(&header), sizeof(header)))
-			return false;
+		if (!RecvAll(sock, (char*)&header, sizeof(header))) return false;
 		bodyBuffer.resize(header.bodyLen);
 		if (header.bodyLen > 0)
 			return RecvAll(sock, bodyBuffer.data(), header.bodyLen);
 		return true;
 	}
 
-	bool RecvAll(SOCKET sock, char* buffer, int length)
+	bool RecvAll(SOCKET sock, char* buffer, int len)
 	{
-		int total = 0;
-		while (total < length)
+		int recvd = 0;
+		while (recvd < len)
 		{
-			int received = recv(sock, buffer + total, length - total, 0);
-			if (received <= 0) return false;
-			total += received;
+			int r = recv(sock, buffer + recvd, len - recvd, 0);
+			if (r <= 0) return false;
+			recvd += r;
 		}
 		return true;
 	}
 };
 
-// ───────────────────────────────
-// 🧪 Main
-// ───────────────────────────────
 int main()
 {
 	CClient client;
@@ -221,6 +197,7 @@ int main()
 			{
 				std::string input;
 				std::getline(std::cin, input);
+
 				if (input == "start")
 				{
 					client.SendMsg(0, (int)ClientMessage::Type::MSG_START, nullptr, 0);
@@ -241,96 +218,128 @@ int main()
 				{
 					client.SendMsg(0, (int)ClientMessage::Type::MSG_MOVE_DOWN, nullptr, 0);
 				}
+				else if (input == "dead")
+				{
+					client.SendMsg(0, (int)ClientMessage::Type::MSG_PLAYER_DEAD, nullptr, 0);
+				}
+				else if (input.rfind("map ", 0) == 0)
+				{
+					try
+					{
+						int mapId = std::stoi(input.substr(4));
+						client.SendMsg(0, (int)ClientMessage::Type::MSG_PICK_MAP, &mapId, sizeof(int));
+					}
+					catch (...)
+					{
+						std::cout << "Invalid map number.\n";
+					}
+				}
 				else if (input.rfind("char ", 0) == 0)
 				{
-					int charId = std::stoi(input.substr(5));
-					client.SendMsg(0, (int)ClientMessage::Type::MSG_PICK_CHARACTER, &charId, sizeof(int));
+					try
+					{
+						int characterId = std::stoi(input.substr(5));
+						client.SendMsg(0, (int)ClientMessage::Type::MSG_PICK_CHARACTER, &characterId, sizeof(int));
+					}
+					catch (...)
+					{
+						std::cout << "Invalid char number.\n";
+					}
 				}
 				else if (input.rfind("item ", 0) == 0)
 				{
-					int slot, item;
-					scanf_s(input.c_str(), "item %d %d", &slot, &item);
-					ItemSelectInfo info{ slot, item };
-					client.SendMsg(0, (int)ClientMessage::Type::MSG_PICK_ITEM, &info, sizeof(info));
+					int slot = -1, itemId = -1;
+
+					// C-string을 만들기 위해 복사
+					char buf[256] = {};
+					strncpy_s(buf, input.c_str() + 5, sizeof(buf) - 1);
+
+					if (sscanf_s(buf, "%d %d", &slot, &itemId) == 2)
+					{
+						int data[2] = { slot, itemId };
+						client.SendMsg(0, (int)ClientMessage::Type::MSG_PICK_ITEM, data, sizeof(data));
+					}
+					else
+					{
+						std::cout << "Invalid format. Use: item <slot> <itemId>\n";
+					}
 				}
+
+
 				else
 				{
-					std::cerr << "Unknown command.\n";
+					std::cout << "Unknown command.\n";
 				}
 			}
 		});
 
+	// 메시지 처리 루프
 	while (true)
 	{
 		RecvMessage msg;
 		if (client.PollMessage(msg))
 		{
-			if (msg.msgType != (int)ServerMessage::Type::MSG_HEARTBEAT_ACK)
-				std::cout << "[MSG TYPE: " << msg.msgType << " ] ";
-
 			switch (msg.msgType)
 			{
 			case (int)ServerMessage::Type::MSG_CONNECTED:
 			{
 				int id;
 				memcpy(&id, msg.body.data(), sizeof(int));
-				std::cout << "My ID: " << id << "\n";
+				std::cout << "[System " << msg.msgType << "] Connected. My ID: " << id << "\n";
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_NEW_OWNER:
 			{
 				int id;
 				memcpy(&id, msg.body.data(), sizeof(int));
-				std::cout << "Room owner is now Client " << id << "\n";
+				std::cout << "[System " << msg.msgType << "] New Room Owner: " << id << "\n";
 				break;
 			}
-			case (int)ServerMessage::Type::MSG_CLIENT_LIST:
+			case (int)ServerMessage::Type::MSG_PLAYER_DEAD:
+				std::cout << "[Game " << msg.msgType << "] Player " << msg.senderId << " died.\n"; break;
+			case (int)ServerMessage::Type::MSG_PICK_MAP:
 			{
-				int count;
-				memcpy(&count, msg.body.data(), sizeof(int));
-				std::cout << "Current players (" << count << "): ";
-				for (int i = 1; i <= count; ++i)
-				{
-					int id;
-					memcpy(&id, msg.body.data() + sizeof(int) * i, sizeof(int));
-					std::cout << id << " ";
+				if (msg.body.size() >= sizeof(int)) {
+					int mapId;
+					memcpy(&mapId, msg.body.data(), sizeof(int));
+					std::cout << "[Game " << msg.msgType << "] Map changed to " << mapId << "\n";
 				}
-				std::cout << "\n";
 				break;
 			}
-			case (int)ServerMessage::Type::MSG_PICK_CHARACTER:
-			{
-				int charId;
-				memcpy(&charId, msg.body.data(), sizeof(int));
-				std::cout << "Client " << msg.senderId << " picked character " << charId << "\n";
-				break;
-			}
+
 			case (int)ServerMessage::Type::MSG_PICK_ITEM:
 			{
-				ItemSelectInfo info;
-				memcpy(&info, msg.body.data(), sizeof(info));
-				std::cout << "Client " << msg.senderId << " picked item " << info.itemId << " at slot " << info.slotIndex << "\n";
+				if (msg.body.size() >= sizeof(int) * 2) {
+					int slot, itemId;
+					memcpy(&slot, msg.body.data(), sizeof(int));
+					memcpy(&itemId, msg.body.data() + sizeof(int), sizeof(int));
+					std::cout << "[Game " << msg.msgType << "] Player " << msg.senderId << " picked item " << itemId << " in slot " << slot << "\n";
+				}
 				break;
 			}
-			case (int)ServerMessage::Type::MSG_READY:
-				std::cout << "Client " << msg.senderId << " is READY\n"; break;
-			case (int)ServerMessage::Type::MSG_UNREADY:
-				std::cout << "Client " << msg.senderId << " is UNREADY\n"; break;
-			case (int)ServerMessage::Type::MSG_MOVE_UP:
-				std::cout << "Client " << msg.senderId << " moved UP\n"; break;
-			case (int)ServerMessage::Type::MSG_MOVE_DOWN:
-				std::cout << "Client " << msg.senderId << " moved DOWN\n"; break;
-			case (int)ServerMessage::Type::MSG_DISCONNECT:
 
+			case (int)ServerMessage::Type::MSG_PICK_CHARACTER:
 			{
-				int id;
-				memcpy(&id, msg.body.data(), sizeof(int));
-				std::cout << "Client " << id << " disconnected\n";
+				if (msg.body.size() >= sizeof(int)) {
+					int characterId;
+					memcpy(&characterId, msg.body.data(), sizeof(int));
+					std::cout << "[Game " << msg.msgType << "] Player " << msg.senderId << " picked character " << characterId << "\n";
+				}
 				break;
 			}
+
+			case (int)ServerMessage::Type::MSG_GAME_OVER:
+				std::cout << "[Game " << msg.msgType << "] " << msg.body.data() << "\n"; break;
+			case (int)ServerMessage::Type::MSG_MOVE_UP:
+				std::cout << "[Game] Client " << msg.senderId << " moved UP\n"; break;
+
+			case (int)ServerMessage::Type::MSG_MOVE_DOWN:
+				std::cout << "[Game] Client " << msg.senderId << " moved DOWN\n"; break;
 			case (int)ServerMessage::Type::MSG_INFO:
-				std::cout << msg.body.data() << "\n"; break;
+				std::cout << "[Info " << msg.msgType << "] " << msg.body.data() << "\n"; break;
 			default:
+				if (msg.msgType != (int)ServerMessage::Type::MSG_HEARTBEAT_ACK)
+					std::cout << "[MSG " << msg.msgType << "] From " << msg.senderId << "\n";
 				break;
 			}
 		}
