@@ -251,6 +251,7 @@ int main()
 				continue;
 
 			std::cout << "[From " << msg.senderId << "] Type " << msg.msgType << ": ";
+
 			switch (msg.msgType)
 			{
 			case (int)ServerMessage::Type::MSG_CONNECTED:
@@ -258,6 +259,13 @@ int main()
 				int id;
 				memcpy(&id, msg.body.data(), sizeof(int));
 				std::cout << "Connected! My ID: " << id;
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_NEW_OWNER:
+			{
+				int newOwnerId;
+				memcpy(&newOwnerId, msg.body.data(), sizeof(int));
+				std::cout << "Notice: The current room owner is Client " << newOwnerId;
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_JOIN:
@@ -274,11 +282,6 @@ int main()
 				std::cout << "Received float: " << val;
 				break;
 			}
-			case (int)ServerMessage::Type::MSG_HEARTBEAT_ACK:
-			{
-				//std::cout << "Received MSG_HEARTBEAT_ACK ";
-				break;
-			}
 			case (int)ServerMessage::Type::MSG_INFO:
 			default:
 				std::cout << msg.body.data();
@@ -286,8 +289,7 @@ int main()
 			}
 			std::cout << "\n";
 		}
-
-		std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 부하 줄이기
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 
 	inputThread.join();
