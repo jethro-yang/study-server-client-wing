@@ -37,6 +37,7 @@ namespace ServerMessage
 		MSG_DISCONNECT,
 		MSG_INFO,
 		MSG_NEW_OWNER,
+		MSG_CLIENT_LIST
 	};
 }
 
@@ -124,7 +125,6 @@ public:
 	void SendMsg(int senderId, int msgType, const void* body, int bodyLen)
 	{
 		MessageHeader header{ senderId, msgType, bodyLen };
-
 		if (!SendAll(mSock, reinterpret_cast<char*>(&header), sizeof(header)))
 			return;
 
@@ -241,7 +241,6 @@ int main()
 			}
 		});
 
-	// 메시지 처리 루프
 	while (true)
 	{
 		RecvMessage msg;
@@ -263,9 +262,22 @@ int main()
 			}
 			case (int)ServerMessage::Type::MSG_NEW_OWNER:
 			{
-				int newOwnerId;
-				memcpy(&newOwnerId, msg.body.data(), sizeof(int));
-				std::cout << "Notice: The current room owner is Client " << newOwnerId;
+				int ownerId;
+				memcpy(&ownerId, msg.body.data(), sizeof(int));
+				std::cout << "Current room owner is Client " << ownerId;
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_CLIENT_LIST:
+			{
+				int count;
+				memcpy(&count, msg.body.data(), sizeof(int));
+				std::cout << "Players online (" << count << "): ";
+				for (int i = 0; i < count; ++i)
+				{
+					int id;
+					memcpy(&id, msg.body.data() + sizeof(int) * (i + 1), sizeof(int));
+					std::cout << id << " ";
+				}
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_JOIN:
@@ -279,7 +291,14 @@ int main()
 			{
 				float val;
 				memcpy(&val, msg.body.data(), sizeof(float));
-				std::cout << "Received float: " << val;
+				std::cout << "Float received: " << val;
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_DISCONNECT:
+			{
+				int leftId;
+				memcpy(&leftId, msg.body.data(), sizeof(int));
+				std::cout << "Client " << leftId << " has left the room.";
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_INFO:
@@ -289,6 +308,7 @@ int main()
 			}
 			std::cout << "\n";
 		}
+
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 
