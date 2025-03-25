@@ -15,38 +15,39 @@
 
 namespace ClientMessage {
 	enum class Type {
-		MSG_HEARTBEAT,			// 0
-		MSG_START,				// 1
-		MSG_PICK_CHARACTER,		// 2
-		MSG_PICK_ITEM,			// 3
-		MSG_PICK_MAP,			// 4
-		MSG_READY,				// 5
-		MSG_UNREADY,			// 6
-		MSG_MOVE_UP,			// 7
-		MSG_MOVE_DOWN,			// 8
-		MSG_PLAYER_DEAD			// 9
+		MSG_HEARTBEAT,
+		MSG_START,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD
 	};
 }
 
 namespace ServerMessage {
 	enum class Type {
-		MSG_CONNECTED,		// 0
-		MSG_HEARTBEAT_ACK,	// 1
-		MSG_START_ACK,		// 2
-		MSG_JOIN,			// 3
-		MSG_DISCONNECT,		// 4
-		MSG_INFO,			// 5
-		MSG_NEW_OWNER,		// 6
-		MSG_CLIENT_LIST,	// 7
-		MSG_PICK_CHARACTER,	// 8
-		MSG_PICK_ITEM,		// 9
-		MSG_PICK_MAP,		// 10
-		MSG_READY,			// 11
-		MSG_UNREADY,		// 12
-		MSG_MOVE_UP,		// 13
-		MSG_MOVE_DOWN,		// 14
-		MSG_PLAYER_DEAD,	// 15
-		MSG_GAME_OVER		// 16
+		MSG_CONNECTED,
+		MSG_HEARTBEAT_ACK,
+		MSG_START_ACK,
+		MSG_JOIN,
+		MSG_DISCONNECT,
+		MSG_CONNECTED_REJECT,
+		MSG_INFO,
+		MSG_NEW_OWNER,
+		MSG_CLIENT_LIST,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD,
+		MSG_GAME_OVER
 	};
 }
 
@@ -349,6 +350,20 @@ int main()
 					memcpy(&newId, msg.body.data(), sizeof(int));
 					std::cout << "[System " << msg.msgType << "] New client joined: " << newId << "\n";
 				}
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_DISCONNECT:
+			{
+				int id;
+				memcpy(&id, msg.body.data(), sizeof(int));
+				std::cout << "[System " << msg.msgType << "] MSG_DISCONNECT from server. ID: " << id << "\n";
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_CONNECTED_REJECT:
+			{
+				std::string reason(msg.body.begin(), msg.body.end());
+				std::cout << "[System " << msg.msgType << "] MSG_CONNECTED_REJECT from server. Reason: " << reason << "\n";
+				exit(0);
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_GAME_OVER:

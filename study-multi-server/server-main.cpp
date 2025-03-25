@@ -16,38 +16,39 @@ enum GameState { WAITING, RUNNING };
 
 namespace ClientMessage {
 	enum class Type {
-		MSG_HEARTBEAT,			// 0
-		MSG_START,				// 1
-		MSG_PICK_CHARACTER,		// 2
-		MSG_PICK_ITEM,			// 3
-		MSG_PICK_MAP,			// 4
-		MSG_READY,				// 5
-		MSG_UNREADY,			// 6
-		MSG_MOVE_UP,			// 7
-		MSG_MOVE_DOWN,			// 8
-		MSG_PLAYER_DEAD			// 9
+		MSG_HEARTBEAT,
+		MSG_START,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD
 	};
 }
 
 namespace ServerMessage {
 	enum class Type {
-		MSG_CONNECTED,		// 0
-		MSG_HEARTBEAT_ACK,	// 1
-		MSG_START_ACK,		// 2
-		MSG_JOIN,			// 3
-		MSG_DISCONNECT,		// 4
-		MSG_INFO,			// 5
-		MSG_NEW_OWNER,		// 6
-		MSG_CLIENT_LIST,	// 7
-		MSG_PICK_CHARACTER,	// 8
-		MSG_PICK_ITEM,		// 9
-		MSG_PICK_MAP,		// 10
-		MSG_READY,			// 11
-		MSG_UNREADY,		// 12
-		MSG_MOVE_UP,		// 13
-		MSG_MOVE_DOWN,		// 14
-		MSG_PLAYER_DEAD,	// 15
-		MSG_GAME_OVER		// 16
+		MSG_CONNECTED,
+		MSG_HEARTBEAT_ACK,
+		MSG_START_ACK,
+		MSG_JOIN,
+		MSG_DISCONNECT,
+		MSG_CONNECTED_REJECT,
+		MSG_INFO,
+		MSG_NEW_OWNER,
+		MSG_CLIENT_LIST,
+		MSG_PICK_CHARACTER,
+		MSG_PICK_ITEM,
+		MSG_PICK_MAP,
+		MSG_READY,
+		MSG_UNREADY,
+		MSG_MOVE_UP,
+		MSG_MOVE_DOWN,
+		MSG_PLAYER_DEAD,
+		MSG_GAME_OVER
 	};
 }
 
@@ -281,6 +282,18 @@ int main() {
 		int size = sizeof(clientAddr);
 		SOCKET clientSock = accept(server, (sockaddr*)&clientAddr, &size);
 
+		// --- 추가: 인원 제한 확인 ---
+		{
+			std::lock_guard<std::recursive_mutex> lock(gMutex);
+			if ((int)gClients.size() >= MAX_PLAYERS) {
+				const char* fullMsg = "Room is full. Connection rejected.";
+				sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_CONNECTED_REJECT, fullMsg, strlen(fullMsg) + 1);
+				std::cout << "[Server] Rejected connection: room full.\n";
+				closesocket(clientSock);
+				continue;
+			}
+		}
+
 		Client* c = new Client;
 		c->sock = clientSock;
 		c->id = gNextId++;
@@ -300,7 +313,7 @@ int main() {
 			sendClientList(c);
 
 			// [추가됨] 기존 클라이언트들에게 새로운 클라이언트의 접속 알림
-			for (auto& other : gClients) 
+			for (auto& other : gClients)
 			{
 				if (other->id != c->id)
 					sendMessage(other->sock, c->id, (int)ServerMessage::Type::MSG_JOIN, &c->id, sizeof(int));
