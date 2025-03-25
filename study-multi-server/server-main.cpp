@@ -246,6 +246,22 @@ void clientThread(Client* client) {
 	delete client;
 }
 
+void sendClientList(Client* newClient) {
+	std::vector<int> ids;
+	for (auto& c : gClients) {
+		if (c->id != newClient->id)
+			ids.push_back(c->id);
+	}
+
+	if (!ids.empty()) {
+		int bodyLen = sizeof(int) * ids.size();
+		sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_CLIENT_LIST, ids.data(), bodyLen);
+		std::cout << "[Server] Sent client list to " << newClient->id << ": [ ";
+		for (int id : ids) std::cout << id << " ";
+		std::cout << "]\n";
+	}
+}
+
 int main() {
 	WSADATA wsa;
 	WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -274,8 +290,21 @@ int main() {
 			gClients.push_back(c);
 			if (gRoomOwner == -1) gRoomOwner = c->id;
 
+			std::cout << "[Server] ServerMessage::Type::MSG_CONNECTED " << c->id << "\n";
+			std::cout << "[Server] ServerMessage::Type::MSG_NEW_OWNER " << gRoomOwner << "\n";
+			// 새 클라이언트에게 자신의 id 및 방장 정보 전송
 			sendMessage(clientSock, c->id, (int)ServerMessage::Type::MSG_CONNECTED, &c->id, sizeof(int));
 			sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(int));
+
+			// [추가됨] 새 클라이언트에게 현재 접속자 리스트 전송
+			sendClientList(c);
+
+			// [추가됨] 기존 클라이언트들에게 새로운 클라이언트의 접속 알림
+			for (auto& other : gClients) 
+			{
+				if (other->id != c->id)
+					sendMessage(other->sock, c->id, (int)ServerMessage::Type::MSG_JOIN, &c->id, sizeof(int));
+			}
 		}
 
 		c->thread = std::thread(clientThread, c);

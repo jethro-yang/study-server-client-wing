@@ -297,7 +297,9 @@ int main()
 				break;
 			}
 			case (int)ServerMessage::Type::MSG_PLAYER_DEAD:
-				std::cout << "[Game " << msg.msgType << "] Player " << msg.senderId << " died.\n"; break;
+				std::cout << "[Game " << msg.msgType << "] Player " << msg.senderId << " died.\n";
+				break;
+
 			case (int)ServerMessage::Type::MSG_PICK_MAP:
 			{
 				if (msg.body.size() >= sizeof(int)) {
@@ -328,16 +330,43 @@ int main()
 				}
 				break;
 			}
-
+			case (int)ServerMessage::Type::MSG_CLIENT_LIST:
+			{
+				std::cout << "[System " << msg.msgType << "] Client list received: ";
+				int count = msg.body.size() / sizeof(int);
+				for (int i = 0; i < count; ++i) {
+					int id;
+					memcpy(&id, msg.body.data() + i * sizeof(int), sizeof(int));
+					std::cout << id << " ";
+				}
+				std::cout << "\n";
+				break;
+			}
+			case (int)ServerMessage::Type::MSG_JOIN:
+			{
+				if (msg.body.size() >= sizeof(int)) {
+					int newId;
+					memcpy(&newId, msg.body.data(), sizeof(int));
+					std::cout << "[System " << msg.msgType << "] New client joined: " << newId << "\n";
+				}
+				break;
+			}
 			case (int)ServerMessage::Type::MSG_GAME_OVER:
-				std::cout << "[Game " << msg.msgType << "] " << msg.body.data() << "\n"; break;
+				std::cout << "[Game " << msg.msgType << "] " << msg.body.data() << "\n";
+				break;
+
 			case (int)ServerMessage::Type::MSG_MOVE_UP:
-				std::cout << "[Game] Client " << msg.senderId << " moved UP\n"; break;
+				std::cout << "[Game] Client " << msg.senderId << " moved UP\n";
+				break;
 
 			case (int)ServerMessage::Type::MSG_MOVE_DOWN:
-				std::cout << "[Game] Client " << msg.senderId << " moved DOWN\n"; break;
+				std::cout << "[Game] Client " << msg.senderId << " moved DOWN\n";
+				break;
+
 			case (int)ServerMessage::Type::MSG_INFO:
-				std::cout << "[Info " << msg.msgType << "] " << msg.body.data() << "\n"; break;
+				std::cout << "[Info " << msg.msgType << "] " << msg.body.data() << "\n";
+				break;
+
 			default:
 				if (msg.msgType != (int)ServerMessage::Type::MSG_HEARTBEAT_ACK)
 					std::cout << "[MSG " << msg.msgType << "] From " << msg.senderId << "\n";
