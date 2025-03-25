@@ -222,6 +222,7 @@ int main()
 				{
 					client.SendMsg(0, (int)ClientMessage::Type::MSG_PLAYER_DEAD, nullptr, 0);
 				}
+				// 여기서부터는 데이터가 껴들어감.
 				else if (input.rfind("map ", 0) == 0)
 				{
 					try
