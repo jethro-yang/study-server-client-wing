@@ -37,6 +37,7 @@ namespace ServerMessage
 	enum class Type
 	{
 		MSG_CONNECTED,
+		MSG_NEW_OWNER,
 		MSG_HEARTBEAT_ACK,
 		MSG_START_ACK,
 		MSG_JOIN,
@@ -241,7 +242,61 @@ int main()
 				std::cout << "[ServerMsg " << msg.msgType << "] From: " << msg.senderId << ", Size: " << msg.body.size() << "\n";
 			}
 
-			if (msg.msgType == (int)ServerMessage::Type::MSG_ROOM_FULL_INFO
+			if (msg.msgType == (int)ServerMessage::Type::MSG_CONNECTED)
+			{
+				int myId;
+				memcpy(&myId, msg.body.data(), sizeof(int));
+				std::cout << "[System] Connected. My ID: " << myId << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_NEW_OWNER
+				&& msg.body.size() == sizeof(int))
+			{
+				int newOwnerId;
+				memcpy(&newOwnerId, msg.body.data(), sizeof(int));
+				std::cout << "[System] New Room Owner is: " << newOwnerId << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_CONNECTED_REJECT)
+			{
+				std::string reason(msg.body.begin(), msg.body.end());
+				std::cout << "[System] Connection rejected: " << reason << "\n";
+				exit(0);
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_JOIN)
+			{
+				int id;
+				if (msg.body.size() == sizeof(int))
+				{
+					memcpy(&id, msg.body.data(), sizeof(int));
+					std::cout << "[System] Player joined: " << id << "\n";
+				}
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_DISCONNECT)
+			{
+				int id;
+				if (msg.body.size() == sizeof(int))
+				{
+					memcpy(&id, msg.body.data(), sizeof(int));
+					std::cout << "[System] Player disconnected: " << id << "\n";
+				}
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_GAME_OVER)
+			{
+				if (!msg.body.empty())
+					std::cout << "[Game Over] " << msg.body.data() << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_MOVE_UP)
+			{
+				std::cout << "[Game] Player " << msg.senderId << " moved UP\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_MOVE_DOWN)
+			{
+				std::cout << "[Game] Player " << msg.senderId << " moved DOWN\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_PLAYER_DEAD)
+			{
+				std::cout << "[Game] Player " << msg.senderId << " is DEAD\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_ROOM_FULL_INFO
 				&& msg.body.size() >= sizeof(int) * 3)
 			{
 				const char* ptr = msg.body.data();
@@ -261,6 +316,40 @@ int main()
 					std::cout << "  Player " << id << " - Ready: " << (ready ? "Yes" : "No")
 						<< ", Items: [" << items[0] << ", " << items[1] << ", " << items[2] << "]\n";
 				}
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_START_ACK)
+			{
+				std::cout << "[Game] Game Started: " << msg.body.data() << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_READY)
+			{
+				std::cout << "[Game] Player " << msg.senderId << " is READY\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_UNREADY)
+			{
+				std::cout << "[Game] Player " << msg.senderId << " is UNREADY\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_PICK_MAP
+				&& msg.body.size() == sizeof(int))
+			{
+				int mapId;
+				memcpy(&mapId, msg.body.data(), sizeof(int));
+				std::cout << "[Game] Player " << msg.senderId << " selected Map ID: " << mapId << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_PICK_CHARACTER
+				&& msg.body.size() == sizeof(int))
+			{
+				int charId;
+				memcpy(&charId, msg.body.data(), sizeof(int));
+				std::cout << "[Game] Player " << msg.senderId << " picked Character: " << charId << "\n";
+			}
+			else if (msg.msgType == (int)ServerMessage::Type::MSG_PICK_ITEM
+				&& msg.body.size() == sizeof(int) * 2)
+			{
+				int slot, itemId;
+				memcpy(&slot, msg.body.data(), sizeof(int));
+				memcpy(&itemId, msg.body.data() + sizeof(int), sizeof(int));
+				std::cout << "[Game] Player " << msg.senderId << " equipped item " << itemId << " in slot " << slot << "\n";
 			}
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
