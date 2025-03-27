@@ -336,20 +336,25 @@ int main()
 			gClients.push_back(c);
 			if (gRoomOwner == -1) gRoomOwner = c->id;
 
+			// 새 클라이언트에게 자신의 id 전송
 			std::cout << "[Server] ServerMessage::Type::MSG_CONNECTED " << c->id << "\n";
-			std::cout << "[Server] ServerMessage::Type::MSG_NEW_OWNER " << gRoomOwner << "\n";
-			// 새 클라이언트에게 자신의 id 및 방장 정보 전송
 			sendMessage(clientSock, c->id, (int)ServerMessage::Type::MSG_CONNECTED, &c->id, sizeof(int));
-			sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(int));
-
+			
 			// 새 클라이언트에게 현재 접속자 리스트 전송
 			sendClientList(c);
+
+			// 새 클라이언트에게 방장 정보 전송
+			std::cout << "[Server] ServerMessage::Type::MSG_NEW_OWNER " << gRoomOwner << "\n";
+			sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(int));
 
 			// 기존 클라이언트들에게 새로운 클라이언트의 접속 알림
 			for (auto& other : gClients)
 			{
-				if (other->id != c->id)
+				if (other->id != c->id) 
+				{
+					std::cout << "[Server] ServerMessage::Type::MSG_JOIN " << c->id << "\n";
 					sendMessage(other->sock, c->id, (int)ServerMessage::Type::MSG_JOIN, &c->id, sizeof(int));
+				}
 			}
 		}
 
