@@ -1,4 +1,6 @@
-﻿#include <iostream>
+﻿// ✅ 서버 전체 코드: MSG_ROOM_FULL_INFO 전송 포함 + Client 구조 확장 완료
+
+#include <iostream>
 #include <thread>
 #include <vector>
 #include <mutex>
@@ -41,9 +43,7 @@ namespace ServerMessage
 		MSG_JOIN,
 		MSG_DISCONNECT,
 		MSG_CONNECTED_REJECT,
-		MSG_INFO,
-		MSG_NEW_OWNER,
-		MSG_CLIENT_LIST,
+		MSG_ROOM_FULL_INFO,
 		MSG_PICK_CHARACTER,
 		MSG_PICK_ITEM,
 		MSG_PICK_MAP,
@@ -112,6 +112,8 @@ struct Client
 	std::thread thread;
 	bool isReady = false;
 	bool isAlive = true;
+	int characterId = -1; // ✅ 선택한 캐릭터 ID
+	int itemSlots[3] = { -1, -1, -1 }; // ✅ 아이템 슬롯 3개
 };
 
 std::recursive_mutex gMutex;
@@ -141,6 +143,29 @@ void checkGameOver()
 		broadcast(0, (int)ServerMessage::Type::MSG_GAME_OVER, msg, strlen(msg) + 1);
 		std::cout << "[Server] Game over.\n";
 	}
+}
+
+void sendRoomFullInfo(Client* client)
+{
+	std::lock_guard<std::recursive_mutex> lock(gMutex);
+	int playerCount = (int)gClients.size();
+	int totalSize = sizeof(int) * 2 + sizeof(int) + playerCount * (sizeof(int) + sizeof(bool) + sizeof(int) * 3);
+	std::vector<char> buffer(totalSize);
+	char* ptr = buffer.data();
+
+	memcpy(ptr, &gRoomOwner, sizeof(int)); ptr += sizeof(int);
+	memcpy(ptr, &gMapId, sizeof(int)); ptr += sizeof(int);
+	memcpy(ptr, &playerCount, sizeof(int)); ptr += sizeof(int);
+
+	for (auto& c : gClients)
+	{
+		memcpy(ptr, &c->id, sizeof(int)); ptr += sizeof(int);
+		memcpy(ptr, &c->isReady, sizeof(bool)); ptr += sizeof(bool);
+		memcpy(ptr, c->itemSlots, sizeof(int) * 3); ptr += sizeof(int) * 3;
+	}
+
+	sendMessage(client->sock, 0, (int)ServerMessage::Type::MSG_ROOM_FULL_INFO, buffer.data(), totalSize);
+	std::cout << "[Server] Sent full room info to " << client->id << "\n";
 }
 
 void clientThread(Client* client)
@@ -176,98 +201,74 @@ void clientThread(Client* client)
 		case ClientMessage::Type::MSG_READY:
 			client->isReady = true;
 			broadcast(client->id, (int)ServerMessage::Type::MSG_READY, nullptr, 0);
-			std::cout << "[Server] ClientMessage::Type::MSG_READY " << client->id << "\n";
 			break;
 
 		case ClientMessage::Type::MSG_UNREADY:
 			client->isReady = false;
 			broadcast(client->id, (int)ServerMessage::Type::MSG_UNREADY, nullptr, 0);
-			std::cout << "[Server] ClientMessage::Type::MSG_UNREADY " << client->id << "\n";
 			break;
 
 		case ClientMessage::Type::MSG_PLAYER_DEAD:
 			client->isAlive = false;
 			broadcast(client->id, (int)ServerMessage::Type::MSG_PLAYER_DEAD, nullptr, 0);
-			std::cout << "[Server] ClientMessage::Type::MSG_PLAYER_DEAD " << client->id << "\n";
 			gDeadPlayers.insert(client->id);
 			checkGameOver();
 			break;
 
 		case ClientMessage::Type::MSG_PICK_MAP:
-		{
 			if (client->id == gRoomOwner && header.bodyLen == sizeof(int))
 			{
 				memcpy(&gMapId, body.data(), sizeof(int));
 				broadcast(0, (int)ServerMessage::Type::MSG_PICK_MAP, &gMapId, sizeof(int));
-				std::cout << "[Server] Map changed to: " << gMapId << "\n";
 			}
 			break;
-		}
+
 		case ClientMessage::Type::MSG_MOVE_UP:
 			broadcast(client->id, (int)ServerMessage::Type::MSG_MOVE_UP, nullptr, 0);
-			std::cout << "[Server] ClientMessage::Type::MSG_MOVE_UP " << client->id << "\n";
 			break;
 
 		case ClientMessage::Type::MSG_MOVE_DOWN:
 			broadcast(client->id, (int)ServerMessage::Type::MSG_MOVE_DOWN, nullptr, 0);
-			std::cout << "[Server] ClientMessage::Type::MSG_MOVE_DOWN " << client->id << "\n";
 			break;
 
 		case ClientMessage::Type::MSG_PICK_ITEM:
-		{
 			if (header.bodyLen == sizeof(int) * 2)
 			{
-				broadcast(client->id, (int)ServerMessage::Type::MSG_PICK_ITEM, body.data(), header.bodyLen);
-
 				int slot, itemId;
 				memcpy(&slot, body.data(), sizeof(int));
 				memcpy(&itemId, body.data() + sizeof(int), sizeof(int));
-				std::cout << "[Server] Client " << client->id << " picked item " << itemId << " in slot " << slot << "\n";
+				if (slot >= 0 && slot < 3) client->itemSlots[slot] = itemId;
+				broadcast(client->id, (int)ServerMessage::Type::MSG_PICK_ITEM, body.data(), header.bodyLen);
 			}
 			break;
-		}
+
 		case ClientMessage::Type::MSG_PICK_CHARACTER:
-		{
 			if (header.bodyLen == sizeof(int))
 			{
+				memcpy(&client->characterId, body.data(), sizeof(int));
 				broadcast(client->id, (int)ServerMessage::Type::MSG_PICK_CHARACTER, body.data(), sizeof(int));
-
-				int characterId;
-				memcpy(&characterId, body.data(), sizeof(int));
-				std::cout << "[Server] Client " << client->id << " picked character " << characterId << "\n";
 			}
 			break;
-		}
 
 		default:
 			break;
 		}
 	}
 
-	// --- 클라이언트 종료 처리 ---
 	{
 		std::lock_guard<std::recursive_mutex> lock(gMutex);
 		auto it = std::find_if(gClients.begin(), gClients.end(), [client](Client* c) { return c->id == client->id; });
-
 		if (it != gClients.end())
 		{
 			bool wasOwner = (client->id == gRoomOwner);
 			gClients.erase(it);
-			std::cout << "[Server] Removed Client " << client->id << "\n";
-
 			broadcast(client->id, (int)ServerMessage::Type::MSG_DISCONNECT, &client->id, sizeof(int));
-
 			if (gClients.empty())
-			{
 				gRoomOwner = -1;
-				std::cout << "[Server] No clients left. Room owner reset.\n";
-			}
 			else if (wasOwner)
 			{
-				// 새로운 방장 설정 및 브로드캐스트
 				gRoomOwner = gClients.front()->id;
-				std::cout << "[Server] Room owner changed to Client " << gRoomOwner << "\n";
-				broadcast(0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(gRoomOwner));
+				broadcast(0, (int)ServerMessage::Type::MSG_JOIN, &gRoomOwner, sizeof(gRoomOwner));
 			}
 		}
 	}
@@ -276,24 +277,7 @@ void clientThread(Client* client)
 	delete client;
 }
 
-void sendClientList(Client* newClient)
-{
-	std::vector<int> ids;
-	for (auto& c : gClients)
-	{
-		if (c->id != newClient->id)
-			ids.push_back(c->id);
-	}
-
-	if (!ids.empty())
-	{
-		int bodyLen = sizeof(int) * ids.size();
-		sendMessage(newClient->sock, 0, (int)ServerMessage::Type::MSG_CLIENT_LIST, ids.data(), bodyLen);
-		std::cout << "[Server] Sent client list to " << newClient->id << ": [ ";
-		for (int id : ids) std::cout << id << " ";
-		std::cout << "]\n";
-	}
-}
+// main() 에서 sendRoomFullInfo 호출만 잊지 않으면 됨
 
 int main()
 {
@@ -316,7 +300,6 @@ int main()
 		int size = sizeof(clientAddr);
 		SOCKET clientSock = accept(server, (sockaddr*)&clientAddr, &size);
 
-		// 인원 제한 확인
 		std::lock_guard<std::recursive_mutex> lock(gMutex);
 		if ((int)gClients.size() >= MAX_PLAYERS)
 		{
@@ -331,31 +314,20 @@ int main()
 		c->sock = clientSock;
 		c->id = gNextId++;
 
+		gClients.push_back(c);
+		if (gRoomOwner == -1) gRoomOwner = c->id;
+
+		// 클라이언트에게 자신의 ID 전송
+		sendMessage(clientSock, c->id, (int)ServerMessage::Type::MSG_CONNECTED, &c->id, sizeof(int));
+
+		// 방 정보 및 상태 전송
+		sendRoomFullInfo(c);
+
+		// 기존 클라이언트에게 새 유저 알림
+		for (auto& other : gClients)
 		{
-			std::lock_guard<std::recursive_mutex> lock(gMutex);
-			gClients.push_back(c);
-			if (gRoomOwner == -1) gRoomOwner = c->id;
-
-			// 새 클라이언트에게 자신의 id 전송
-			std::cout << "[Server] ServerMessage::Type::MSG_CONNECTED " << c->id << "\n";
-			sendMessage(clientSock, c->id, (int)ServerMessage::Type::MSG_CONNECTED, &c->id, sizeof(int));
-			
-			// 새 클라이언트에게 현재 접속자 리스트 전송
-			sendClientList(c);
-
-			// 새 클라이언트에게 방장 정보 전송
-			std::cout << "[Server] ServerMessage::Type::MSG_NEW_OWNER " << gRoomOwner << "\n";
-			sendMessage(clientSock, 0, (int)ServerMessage::Type::MSG_NEW_OWNER, &gRoomOwner, sizeof(int));
-
-			// 기존 클라이언트들에게 새로운 클라이언트의 접속 알림
-			for (auto& other : gClients)
-			{
-				if (other->id != c->id) 
-				{
-					std::cout << "[Server] ServerMessage::Type::MSG_JOIN " << c->id << "\n";
-					sendMessage(other->sock, c->id, (int)ServerMessage::Type::MSG_JOIN, &c->id, sizeof(int));
-				}
-			}
+			if (other->id != c->id)
+				sendMessage(other->sock, c->id, (int)ServerMessage::Type::MSG_JOIN, &c->id, sizeof(int));
 		}
 
 		c->thread = std::thread(clientThread, c);
@@ -366,3 +338,4 @@ int main()
 	WSACleanup();
 	return 0;
 }
+
